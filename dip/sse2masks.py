@@ -26,6 +26,7 @@ from pymongo import MongoClient
 import sys
 
 #Some label constants -- can change these in the future, if they are changed in settings.json
+LABEL_VOID = 'VOID'
 LABEL_AISLE = 'Aisle'
 LABEL_PLOT = 'Plot'
 LABEL_PARTIAL_PLOT = 'Partial Plot'
@@ -56,7 +57,7 @@ def parse_args():
             'layer-gray: This stores the mask file as a multi-layer (multi-channel) numpy array in a grayscale (uint8) format.')
     parser.add_argument('--mask-image', dest='mask', action='store_true', help='Generate original image with overlayed masks in PNG format.  NOTE: mask colors based on original ')  
     parser.add_argument('-a', '--alpha', '--mask-image-alpha', dest='alpha', action='store', type=float, default=0.7, help='Generate original image with overlayed masks in PNG format.')  
-    parser.add_argument('--strip', '--delete-classes', nargs='*', dest='strip', default=[], action='append', help='Whether to remove/strip certain classes from the original settings.json file (either b/c they are irrelevant, or were never annotated in images.)')
+    parser.add_argument('--strip', '--delete-classes', dest='strip', action='append', help='Whether to remove/strip certain classes from the original settings.json file (either b/c they are irrelevant, or were never annotated in images.)')
     parser.add_argument('--mask-map', dest='map', default='sse2masks.map', help='A JSON-encoded map file containing the details on how the original segmentation masks map to masks used in training/prediction (for when deletion/merging is used)')
     parsed = parser.parse_args(sys.argv[1:])
     return(parsed)
@@ -118,6 +119,7 @@ if __name__ == '__main__':
             sse2mask_map_dict['orig-objects'] = copy.deepcopy(dcos) #Make a deep copy of the original
         output_indices = [True]*len(dcos) #Initialize to all indices in the initial annotated images
         #Get original indices before any stripping/remapping occurs
+        void_idx        = findClassIndex(dcos,LABEL_VOID)
         aisle_idx       = findClassIndex(dcos,LABEL_AISLE)
         plots_idx       = findClassIndex(dcos,LABEL_PLOT)
         pplots_idx      = findClassIndex(dcos,LABEL_PARTIAL_PLOT)
@@ -169,6 +171,9 @@ if __name__ == '__main__':
                 union    = union | mask_bin
                 class_mask.append(mask_bin)
             #Subtract out harvest rings from both plots and partial plots
+            for strip_class in parsed.strip:
+                strip_class_idx = findClassIndex(dcos,strip_class)
+                class_mask[void_idx] |= class_mask[strip_class_idx]
             class_mask[plots_idx] = class_mask[plots_idx] & ~class_mask[harvesto_idx]
             class_mask[pplots_idx] = class_mask[pplots_idx] & ~class_mask[harvesto_idx]
             #Subtract out the inner part of harvest ring from outer
