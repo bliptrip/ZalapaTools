@@ -116,6 +116,10 @@ if __name__ == '__main__':
         drone_classes       = filter(lambda c: "Drone Berry Development" == c['name'], sets_of_classes)
         for dc in drone_classes:
             dcos = list(enumerate(dc['objects']))
+            for d in dcos:
+                ddict = d[1]
+                color_h = ddict['color'].lstrip('#')
+                ddict['rgb'] = tuple(int(color_h[i:i+2], 16) for i in (0, 2, 4)) #Deconstruct hex string
             sse2mask_map_dict['orig-objects'] = copy.deepcopy(dcos) #Make a deep copy of the original
         output_indices = [True]*len(dcos) #Initialize to all indices in the initial annotated images
         #Get original indices before any stripping/remapping occurs
