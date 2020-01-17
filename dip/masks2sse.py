@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Author: Andrew Maule
 # Date: 2019-01-14
 # Objective: To take multichannel masks and convert to datapoints for the semantic segmentation editor (SSE).  Data is pushed to the mongodb connection.
@@ -21,9 +21,12 @@ from glob import glob
 import imutils
 import json
 import numpy as np
+import os
 from pymongo import MongoClient
+import re
 from shapely.geometry import Point,Polygon
 import sys
+import urllib
 
 # construct the argument parser and parse the arguments
 def parse_args():
@@ -91,7 +94,7 @@ if __name__ == '__main__':
     db          = client[parsed.db]
     sse_samps   = db["SseSamples"]
     for mf in mask_files:
-        raw_image_path = mf.replace('.masks.npz','',mf)
+        raw_image_path = re.sub(r'\.masks\.npz$','',mf)
         masks = np.load(mf)['masks']
         num_masks = masks.shape[-1]
         #Do some validity checking?  See if the number of mask layers matches that in meta
@@ -110,7 +113,7 @@ if __name__ == '__main__':
         sse_samp = sse_samps.find_one({ "url": url })
         if( sse_samp ):
             sse_samp["lastEditDate"] = current_datetime
-            sse_samp["objects"]      = contours
+            sse_samp["objects"]      = contours_sse
             if "predicted" not in sse_samp["tags"]:
                 sse_samp["tags"].append("predicted")
             sse_samps.update({'url': sse_samp['url']}, sse_samp, upsert=False)
@@ -120,8 +123,8 @@ if __name__ == '__main__':
                           "firstEditDate":   current_datetime,
                           "lastEditDate":    current_datetime,
                           "folder":          generateFolder(parsed.path, raw_image_path),
-                          "objects":         contours,
+                          "objects":         contours_sse,
                           "tags":            ["predicted"],
-                          "file":            os.path.basename() }
+                          "file":            os.path.basename(raw_image_path) }
             sse_samps.insert_one(sse_samp)
 
