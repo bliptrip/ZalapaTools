@@ -157,8 +157,8 @@ if __name__ == '__main__':
         sse2mask_map_json = json.dumps(sse2mask_map_dict)
         client          = MongoClient(parsed.hostname, parsed.port)
         db              = client[parsed.db]
-        sse_samples     = db["SseSamples"]
-        for annotation in sse_samples.find():
+        sse_samples     = db.SseSamples
+        for annotation in sse_samples.find({"tags": {"$nin": ['predicted']}}):
             #Find the corresponding image on the local drive
             img_path = parsed.path + '/' + annotation['folder'] + '/' + annotation['file']
             #Load the image, mostly to just get size parameters
