@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument('-p', '--port', action='store', type=int, default=3003, help="The MongoDB port to connect to.")
     parser.add_argument('-d', '--db', action='store', default="meteor", help="MongoDB database name to access.")
     parser.add_argument('--mask-map', dest='map', default='sse2masks.map', help='A JSON-encoded map file containing the details on how the original segmentation masks map to masks used in training/prediction (for when deletion/merging is used)')
+    parser.add_argument('--chain_method', '--chain', dest='chain', action='store', default="CHAIN_APPROX_SIMPLE", choices=["CHAIN_APPROX_NONE", "CHAIN_APPROX_SIMPLE", "CHAIN_APPROX_TC89_L1", "CHAIN_APPROX_TC89_KCOS"], help="Chain approximation method for contours.")
     parser.add_argument('-s', '--socName', action='store', default="Drone Berry Development", help="The set-of-class name, or the identifier used to map object class ids to names.")
     parser.add_argument('-e', '--exclude', '--exclude-masks', dest='exclude', nargs='+', default=["Aisle"], help="Exclude semantic segmentation mask with categories specified in this parameter.")
     parsed = parser.parse_args(sys.argv[1:])
@@ -79,8 +80,8 @@ def convertPolygonsToContours(polygons, contours):
             contours[i]["polygon"][j] = {"x": float(x[j]), "y": float(y[j])}
 
 
-def extractContours(mask, contours_sse, classIndex=0, layer=0):
-    contours  = cv2.findContours(mask.astype('uint8'), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+def extractContours(mask, contours_sse, chain_method, classIndex=0, layer=0):
+    contours  = cv2.findContours(mask.astype('uint8'), cv2.RETR_LIST, eval('cv2.'+chain_method))
     contours  = imutils.grab_contours(contours)
     contours_sse.extend([{"classIndex": classIndex, "layer": layer, "polygon": [{"x": float(pt[0][0]), "y": float(pt[0][1])} for pt in polygon]} for polygon in contours])
     return
@@ -95,6 +96,7 @@ if __name__ == '__main__':
     sse_samps   = db["SseSamples"]
     for mf in mask_files:
         raw_image_path = re.sub(r'\.masks\.npz$','',mf)
+        print("Loading mask file {}".format(mf))
         masks = np.load(mf)['masks']
         num_masks = masks.shape[-1]
         #Do some validity checking?  See if the number of mask layers matches that in meta
@@ -106,7 +108,7 @@ if __name__ == '__main__':
         for m in range(num_masks):
             if not (meta['new-objects'][m][1]['label'] in parsed.exclude):
                 origClassIndex = meta['new-objects'][m][0] #Back-map the current class index to the original
-                extractContours(bin_masks[:,:,m], contours_sse, classIndex=origClassIndex, layer=0)
+                extractContours(bin_masks[:,:,m], contours_sse, parsed.chain, classIndex=origClassIndex, layer=0)
         #Initialize a SseSamples document
         url                = generateURL(parsed.path, raw_image_path)
         current_datetime   = datetime.datetime.now()
