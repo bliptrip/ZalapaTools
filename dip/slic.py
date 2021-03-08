@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Author: Andrew Maule
 # Objective: To connect to the semantic segmentation editor (SSE) via its mongodb connection and inject Simple Linear Iterative Clustering (SLIC) superpixels into
 #              images in the DB.
@@ -10,9 +10,10 @@
 
 # import the necessary packages
 import argparse
-import cv2
 import datetime
 from glob import *
+import json
+import math
 import numpy as np
 import os
 from pymongo import MongoClient
@@ -24,76 +25,62 @@ from skimage.util import img_as_float
 from skimage import io
 from skimage import measure
 from skimage import filters
+from _sse import *
 import sys
 import urllib
 
 MAX_DISTANCE = 4000000.0
+
+DEBUG = False
+def sdebug(pstr):
+    if DEBUG:
+        sys.stdout.write(pstr)
+
 
 def generateSegments(image_path, num_segments):
     # load the image and convert it to a floating point data type
     image = img_as_float(io.imread(image_path))
     # apply SLIC and extract (approximately) the supplied number
     # of segments
-    segments = slic(image, n_segments = num_segments, convert2lab=True, enforce_connectivity=True, compactness=20.0, sigma = 2.5)
+    segments = slic(image, n_segments = num_segments, multichannel=True, convert2lab=True, enforce_connectivity=True, compactness=10.0, sigma = 3)
     return(segments)
 
-def snapPolygons(polygons, threshold=2.0):
+
+def snapPolygons(polygons, dim_x, dim_y, threshold=2.0):
     num_polygons = len(polygons)
-    distances = np.zeros(shape=[num_polygons, num_polygons], dtype="float")
-    distances2 = np.zeros(shape=[num_polygons, num_polygons], dtype="float")
+    num_polygons_x = round(math.sqrt((num_polygons * dim_x)/dim_y))
+    inter_x_distance = dim_x/num_polygons_x
+    num_polygons_y = round(num_polygons/num_polygons_x)
+    inter_y_distance = dim_y/num_polygons_y
+    neighbor_distance_threshold = max(inter_x_distance, inter_y_distance) * 2.5
+    sdebug("Neighbor distance threshold: {}\n".format(neighbor_distance_threshold))
     #Initialize distances matrix to MAX_DISTANCE
+    distances = np.zeros(shape=[num_polygons, num_polygons], dtype="float")
     distances[:,:] = MAX_DISTANCE
-    distances2[:,:] = MAX_DISTANCE
-    neighbors = np.array((num_polygons, num_polygons), dtype="bool")
     for i in range(0, num_polygons):
         for j in range(i+1, num_polygons):
-            print("Calculating distance between polygon %d and polygon %d." % (i,j))
-            distances[i,j]    = polygons[i].distance(polygons[j])
-    neighbors = distances < threshold
+            distances[i,j]    = polygons[i].centroid.distance(polygons[j].centroid)
+            sdebug("Distance between polygon {} and polygon {}: {}\n".format(i,j,distances[i,j]))
+    neighbors = distances < neighbor_distance_threshold
     #Now that neighbors matrix has been calculated, let's do the snap operations
     for i in range(0, num_polygons):
         polygon_neighbors = np.where(neighbors[i])[0]
         for j in polygon_neighbors:
-            print("Snapping polygon %d to polygon %d." % (i,j))
+            sdebug("Snapping polygon %d to polygon %d.\n" % (i,j))
             polygons[i] = snap(polygons[i], polygons[j], threshold)
     return(polygons)
 
-def convertPolygonsToContours(polygons, contours):
+
+def convertPolygonsToContours(polygons, classIndex = 0, layer = 0):
+    contours = [{}] * len(polygons)
     num_polygons = len(polygons)
     for i in range(0, num_polygons):
         (x,y) = polygons[i].exterior.coords.xy
-        contours[i]["polygon"] = [{}] * len(x)
+        contours[i] = { "classIndex": classIndex, "layer": layer, "polygon": [{}] * len(x) }
         for j in range(0, len(x)):
             contours[i]["polygon"][j] = {"x": float(x[j]), "y": float(y[j])}
+    return(contours)
 
-def convertToPolygon(mask, classIndex=0, layer=0):
-    #mask3 = np.zeros((mask.shape[0]+24, mask.shape[1]+24), dtype='float')
-    #mask3[12:-12,12:-12] = mask
-    mask2, contours = cv2.findContours(mask.astype('uint8'), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    ##contours[0]         = contours[0] - [12,12]
-    #contours_stacked    = measure.find_contours(mask3, level=0.5, positive_orientation='high', fully_connected='high')[0]
-    #contours_stacked[contours_stacked < 0.] = 0.
-    #contours_stacked = measure.approximate_polygon(contours_stacked, 0.25)
-    contours_stacked    = np.vstack(np.vstack(contours[0]))
-    polygon             = Polygon(contours_stacked)
-    num_points          = contours_stacked.shape[0]
-    contour_object      = { "classIndex": classIndex, "layer": layer, "polygon": None }
-    #for i in range(0,num_points):
-    #    contour_polygons[i] = {"x": float(contours_stacked[i][1]), "y": float(contours_stacked[i][0])}
-    return((polygon,contour_object))
-
-def generateFolder(path, filename):
-    #Strip path prefix from filename
-    p = re.compile("("+path+")(.+)")
-    m = p.match(filename)
-    folder = os.path.dirname('/'+m.group(2))
-    return(folder)
-
-def generateURL(path, filename):
-    #Strip path prefix from filename
-    file_path = generateFolder(path, filename)+'/'+os.path.basename(filename)
-    url_path  = '/'+urllib.parse.quote(file_path, safe='')
-    return(url_path)
 
 # construct the argument parser and parse the arguments
 def parse_args():
@@ -105,50 +92,68 @@ def parse_args():
     parser.add_argument('-e', '--extension', action='store', default="*.JPG", help="The image extension to glob against.")
     parser.add_argument('-d', '--db', action='store', default="meteor", help="The name of the MongoDB database to use.")
     parser.add_argument('-s', '--socName', action='store', default="Drone Berry Development", help="The set-of-class name, or the identifier used to map object class ids to names.")
-    parser.add_argument('-c', '--classIndex', action='store', type=int, default=2, help="The default class index (category index) to assign each superpixel object.")
+    parser.add_argument('-c', '--classIndex', action='store', type=int, default=0, help="The default class index (category index) to assign each superpixel object.")
+    parser.add_argument('--chain_method', '--chain', dest='chain', action='store', default="CHAIN_APPROX_SIMPLE", choices=["CHAIN_APPROX_NONE", "CHAIN_APPROX_SIMPLE", "CHAIN_APPROX_TC89_L1", "CHAIN_APPROX_TC89_KCOS"], help="Chain approximation method for contours.")
+    parser.add_argument('--settings', action='store', default="settings.json", help="The settings.json file used by the active running instance of SSE's meteor webapp.")
+    parser.add_argument('-u', '--force-update', dest='update', action='store_true', help="If this flag is set, then forces an overwrite of the an image DB annotation if it already exists.")
+    parser.add_argument('--debug', action='store_true', help="Print minimal debug while executing the script.")
     parsed = parser.parse_args(sys.argv[1:])
     return(parsed)
 
   
 if __name__ == '__main__':
     parsed        = parse_args()
+    if( parsed.debug ):
+        DEBUG = True
     client        = MongoClient(parsed.hostname, parsed.port)
     db            = client[parsed.db]
     sse_samples   = db["SseSamples"]
-    image_files   = glob(parsed.path+"/**/"+parsed.extension, recursive=True)
+    image_path    = os.path.realpath(parsed.path)
+    image_files   = glob(image_path+"/**/"+parsed.extension, recursive=True)
+    settings      = json.loads(open(parsed.settings, 'r').read())
+    sse_root      = os.path.realpath(settings['configuration']['images-folder'])
     for image_file in image_files:
+        sdebug("Executing SLIC segmentation on image {}\n".format(image_file))
         segments     = generateSegments(image_file, parsed.num_segments)
         #boundaries   = find_boundaries(segments, mode='subpixel')
         levels       = np.unique(segments)
-        contours      = [[]] * levels.size
-        polygons      = [[]] * levels.size
+        contours      = [None] * levels.size
+        polygons      = [None] * levels.size
         #Generate the contour objects
         for i in levels:
             mask        = (segments == i).astype('float');
-            (polygons[i],contours[i]) = convertToPolygon(mask, classIndex=parsed.classIndex, layer=0)
-        #Snap polygons with each other
-        polygons = snapPolygons(polygons)
+            contours_sse = []
+            contours[i] = extractContours(mask, contours_sse, parsed.chain)
+            polygons[i] = Polygon([[pt[0][0],pt[0,1]] for pt in contours[i][0]])
+        #Snap polygons with each other -- This can be incredibly slow
+        dim_y = segments.shape[0]
+        dim_x = segments.shape[1]
+        polygons = snapPolygons(polygons, dim_x, dim_y)
         #Convert polygons back to coordinates
-        convertPolygonsToContours(polygons, contours)
+        contours = convertPolygonsToContours(polygons, parsed.classIndex)
         #Initialize a SseSamples document
-        url                = generateURL(parsed.path, image_file)
+        url                = generateSSEURL(sse_root, image_file)
         current_datetime   = datetime.datetime.now()
         sse_sample = sse_samples.find_one({ "url": url })
         if( sse_sample ):
-            sse_sample["lastEditDate"] = current_datetime
-            sse_sample["objects"]      = contours
-            if "slic" not in sse_sample["tags"]:
-                sse_sample["tags"].append("slic")
-            #r = sse_samples.replace_one({ "url": url }, sse_sample, upsert=True)
-            test = None
+            sdebug("{} already found in database: ".format(image_file))
+            if( parsed.update ):
+                sdebug("Updating ...\n")
+                sse_sample["lastEditDate"] = current_datetime
+                sse_sample["objects"]      = contours
+                if "slic" not in sse_sample["tags"]:
+                    sse_sample["tags"].append("slic")
+                sse_samples.update({ "url": url }, sse_sample, upsert=False)
+            else:
+                sdebug("_NOT_ updating.  Specify '-u' flag to force overwrite of existing entry in the database.\n")
         else:
+            sdebug("Inserting {} in database.\n".format(image_file))
             sse_sample = {  "url":             url,
                             "socName":         parsed.socName, 
                             "firstEditDate":   current_datetime,
                             "lastEditDate":    current_datetime,
-                            "folder":          generateFolder(parsed.path, image_file),
+                            "folder":          generateSSEFolder(sse_root, image_file),
                             "objects":         contours,
                             "tags":            ["slic"],
                             "file":            os.path.basename(image_file) }
-            #r = sse_samples.insert_one(sse_sample);
-            test = None
+            sse_samples.insert_one(sse_sample);

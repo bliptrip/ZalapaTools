@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Author: Andrew Maule
 # Date: 2019-01-14
-# Objective: To take multichannel masks and convert to datapoints for the semantic segmentation editor (SSE).  Data is pushed to the mongodb connection.
+# Objective: To take multichannel masks and convert to datapoints for the semantic segmentation editor (SSE).  Data is pushed to the mongodb connection used by the SSE server.
 #
 #
 # Parameters:
@@ -15,18 +15,16 @@
 #    predicted masks to sse contours.
 
 import argparse
-import cv2
 import datetime
 from glob import glob
-import imutils
 import json
 import numpy as np
 import os
 from pymongo import MongoClient
 import re
-from shapely.geometry import Point,Polygon
+from shapely.geometry import Polygon
++from _sse import *
 import sys
-import urllib
 
 # construct the argument parser and parse the arguments
 def parse_args():
@@ -39,23 +37,9 @@ def parse_args():
     parser.add_argument('--chain_method', '--chain', dest='chain', action='store', default="CHAIN_APPROX_SIMPLE", choices=["CHAIN_APPROX_NONE", "CHAIN_APPROX_SIMPLE", "CHAIN_APPROX_TC89_L1", "CHAIN_APPROX_TC89_KCOS"], help="Chain approximation method for contours.")
     parser.add_argument('-s', '--socName', action='store', default="Drone Berry Development", help="The set-of-class name, or the identifier used to map object class ids to names.")
     parser.add_argument('-e', '--exclude', '--exclude-masks', dest='exclude', nargs='+', default=["Aisle"], help="Exclude semantic segmentation mask with categories specified in this parameter.")
+    parser.add_argument('--settings', '--exclude', '--exclude-masks', dest='exclude', nargs='+', default=["Aisle"], help="Exclude semantic segmentation mask with categories specified in this parameter.")
     parsed = parser.parse_args(sys.argv[1:])
     return(parsed)
-
-
-def generateFolder(path, filename):
-    #Strip path prefix from filename
-    p = re.compile("("+path+")(.+)")
-    m = p.match(filename)
-    folder = os.path.dirname('/'+m.group(2))
-    return(folder)
-
-
-def generateURL(path, filename):
-    #Strip path prefix from filename
-    file_path = generateFolder(path, filename)+'/'+os.path.basename(filename)
-    url_path  = '/'+urllib.parse.quote(file_path, safe='')
-    return(url_path)
 
 
 def findClassIndex(drone_class_objects,name):
@@ -79,13 +63,6 @@ def convertPolygonsToContours(polygons, contours):
         for j in range(0, len(x)):
             contours[i]["polygon"][j] = {"x": float(x[j]), "y": float(y[j])}
 
-
-def extractContours(mask, contours_sse, chain_method, classIndex=0, layer=0):
-    contours  = cv2.findContours(mask.astype('uint8'), cv2.RETR_LIST, eval('cv2.'+chain_method))
-    contours  = imutils.grab_contours(contours)
-    contours_sse.extend([{"classIndex": classIndex, "layer": layer, "polygon": [{"x": float(pt[0][0]), "y": float(pt[0][1])} for pt in polygon]} for polygon in contours])
-    return
-
 if __name__ == '__main__':
     parsed      = parse_args()
     path_search = '{}/**/*.masks.npz'.format(parsed.path)
@@ -95,7 +72,7 @@ if __name__ == '__main__':
     db          = client[parsed.db]
     sse_samps   = db["SseSamples"]
     for mf in mask_files:
-        raw_image_path = re.sub(r'\.masks\.npz$','',mf)
+        raw_image_filename = os.path.basename(re.sub(r'\.masks\.npz$','',mf))
         print("Loading mask file {}".format(mf))
         masks = np.load(mf)['masks']
         num_masks = masks.shape[-1]
@@ -110,7 +87,8 @@ if __name__ == '__main__':
                 origClassIndex = meta['new-objects'][m][0] #Back-map the current class index to the original
                 extractContours(bin_masks[:,:,m], contours_sse, parsed.chain, classIndex=origClassIndex, layer=0)
         #Initialize a SseSamples document
-        url                = generateURL(parsed.path, raw_image_path)
+        folder             = generateSSEFolder(parsed.path, raw_image_path)
+        url                = generateSSEURL(folder, raw_image_path)
         current_datetime   = datetime.datetime.now()
         sse_samp = sse_samps.find_one({ "url": url })
         if( sse_samp ):

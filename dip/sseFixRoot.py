@@ -23,8 +23,8 @@ import os
 from pathlib import Path
 from pymongo import MongoClient
 import re
+from _sse import *
 import sys
-import urllib
 
 # construct the argument parser and parse the arguments
 def parse_args():
@@ -40,11 +40,6 @@ def parse_args():
     return(parsed)
 
 
-def generateURL(folder, filename):
-    url_path  = '/'+urllib.parse.quote(str(Path(folder + '/' + filename)), safe='')
-    return(url_path)
-
-
 if __name__ == '__main__':
     parsed      = parse_args()
     client      = MongoClient(parsed.hostname, parsed.port)
@@ -56,5 +51,5 @@ if __name__ == '__main__':
             s['folder'] = str(Path('/' + parsed.prepend + '/' + s['folder']))
         elif parsed.strip:
             s['folder'] = str(Path('/' + re.sub(parsed.strip, "", s['folder'])))
-        s['url'] = generateURL(s['folder'], s['file'])
+        s['url'] = generateSSEURL(s['folder'], s['file'])
         db.SseSamples.replace_one({'_id': s['_id']}, s, upsert=False)
