@@ -1,4 +1,17 @@
 #This Makefile is mostly intended to demonstrate usage of the scripts embedded within this tool.
+DEBUGP= 
+ifneq ($(DEBUG),)
+		DEBUGP=python3 -m pdb
+endif
+
+genref:
+	$(DEBUGP) ./genRefCC.py -c ../Data/xrite_cc_colors.csv -o ../Data/xrite_cc_ref_swatch.PNG
+
+sse2Mask:
+	$(DEBUGP) ./sse2CCMasks.py --settings ~/Zalapa/projects/Drone/Software/bliptrip/semantic-segmentation-editor/settings.json
+
+mask2CC:
+	$(DEBUGP) ./mask2CC.py --settings ~/Zalapa/projects/Drone/Software/bliptrip/semantic-segmentation-editor/settings.json
 
 xrite_cc_rgb2hex:
 		./whitebalance_map_rgb2hex.py -m ../Data/xrite_cc_colors.csv
