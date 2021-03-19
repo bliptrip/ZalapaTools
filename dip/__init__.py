@@ -1,2 +1,3 @@
-from dip import normalizeHist
-from dip import matchHists
+from . import normalizeHist
+from . import matchHists
+from . import mcolor_correction
