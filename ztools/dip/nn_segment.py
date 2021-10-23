@@ -7,7 +7,7 @@ from keras import models
 from keras import layers
 from keras.callbacks import EarlyStopping
 import numpy as np
-from segment import Segment
+from .segment import Segment
 
 
 class NNSegment(Segment):

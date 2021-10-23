@@ -4,7 +4,7 @@
 # Objective: Simple binary-threshold method for segmenting foreground from background.
 #
 import cv2
-from segment import Segment
+from .segment import Segment
 
 class BinaryThresholdSegment(Segment):
     def __init__(self, channel=2, threshold=100, **kwargs):
