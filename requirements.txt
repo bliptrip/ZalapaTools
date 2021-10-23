@@ -1,0 +1,15 @@
+argparse
+flask
+h5py
+imutils
+keras
+numpy
+opencv-python
+pandas
+plantcv
+pymongo
+pymongoext
+scikit-image
+scikit-learn
+scipy
+tensorflow
