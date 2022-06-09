@@ -33,3 +33,25 @@ def extractContours(mask, contours_sse, chain_method, classIndex=0, layer=0):
     contours_sse.extend([{"classIndex": classIndex, "layer": layer, "polygon": [{"x": float(pt[0][0]), "y": float(pt[0][1])} for pt in polygon]} for polygon in contours])
     return(contours)
 
+def findClassIndex(drone_class_objects,name):
+    index               = -1
+    for i,dco in drone_class_objects:
+        if name == dco['label']:
+            index = i
+            break
+    return index
+
+
+def generateMaskOverlay(img, masks, drone_class_objects, alpha=0.4):
+    newimg        = np.zeros(img.shape, dtype='uint8')
+    overlay       = np.zeros(img.shape, dtype='uint8')
+    for i,mask in enumerate(masks):
+        h = drone_class_objects[i][1]['color'].lstrip('#')
+        bgr = tuple(int(h[i:i+2], 16) for i in (0, 2 ,4))
+        overlay[mask,:] = bgr
+    cv2.addWeighted(overlay, alpha, img, 1.0-alpha, 0.0, newimg)
+    return((overlay,newimg))
+        
+
+def getClassIndex(o):
+    return o['classIndex']

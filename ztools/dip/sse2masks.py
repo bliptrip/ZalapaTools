@@ -21,9 +21,10 @@ from glob import glob
 import gzip
 import json
 import numpy as np
-import pyexiv2
+import py3exiv2
 from pymongo import MongoClient
 import sys
+from _sse import *
 
 #Some label constants -- can change these in the future, if they are changed in settings.json
 LABEL_VOID = 'VOID'
@@ -57,31 +58,11 @@ def parse_args():
             'layer-gray: This stores the mask file as a multi-layer (multi-channel) numpy array in a grayscale (uint8) format.')
     parser.add_argument('--mask-image', dest='mask', action='store_true', help='Generate original image with overlayed masks in PNG format.  NOTE: mask colors based on original ')  
     parser.add_argument('-a', '--alpha', '--mask-image-alpha', dest='alpha', action='store', type=float, default=0.7, help='Generate original image with overlayed masks in PNG format.')  
-    parser.add_argument('--strip', '--delete-classes', dest='strip', action='append', help='Whether to remove/strip certain classes from the original settings.json file (either b/c they are irrelevant, or were never annotated in images.)')
+    parser.add_argument('--strip', '--delete-classes', dest='strip', action='append', default=[], help='Whether to remove/strip certain classes from the original settings.json file (either b/c they are irrelevant, or were never annotated in images.)')
     parser.add_argument('--mask-map', dest='map', default='sse2masks.map', help='A JSON-encoded map file containing the details on how the original segmentation masks map to masks used in training/prediction (for when deletion/merging is used)')
     parsed = parser.parse_args(sys.argv[1:])
     return(parsed)
 
-
-def findClassIndex(drone_class_objects,name):
-    index               = -1
-    for i,dco in drone_class_objects:
-        if name == dco['label']:
-            index = i
-            break
-    return index
-
-
-def generateMaskOverlay(img, masks, drone_class_objects, alpha):
-    newimg        = np.zeros(img.shape, dtype='uint8')
-    overlay       = np.zeros(img.shape, dtype='uint8')
-    for i,mask in enumerate(masks):
-        h = drone_class_objects[i][1]['color'].lstrip('#')
-        bgr = tuple(int(h[i:i+2], 16) for i in (0, 2 ,4))
-        overlay[mask,:] = bgr
-    cv2.addWeighted(overlay, alpha, img, 1.0-alpha, 0.0, newimg)
-    return((overlay,newimg))
-        
 
 def generateXMPMetadata(img_path,argv,json,author='Andrew Maule'):
     meta = pyexiv2.ImageMetadata(img_path)
@@ -90,10 +71,6 @@ def generateXMPMetadata(img_path,argv,json,author='Andrew Maule'):
     meta['Xmp.custom.cli'] = ' '.join(sys.argv)
     meta['Xmp.custom.data'] = sse2mask_map_json
     meta.write()
-
-def getClassIndex(o):
-    return o['classIndex']
-
 
 if __name__ == '__main__':
     pyexiv2.register_namespace('/', 'custom')
@@ -194,7 +171,7 @@ if __name__ == '__main__':
             if parsed.format == 'split-binary':
                 for i,m in enumerate(class_mask_subset):
                     packed = np.packbits(m, axis=-1)
-                    np.savez_compressed(img_path+'.mask.packed.npz',packed)
+                    np.savez_compressed(img_path+'.mask.'+str(i)+'.packed.npz',packed)
             elif parsed.format == 'split-gray':
                 for i,m in enumerate(class_mask_subset):
                     cv2.imwrite(img_path+'.mask.'+str(i)+'.png',m.astype('uint8')*255)
