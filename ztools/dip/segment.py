@@ -131,14 +131,23 @@ class Segment():
         binimage = binimage | holes.astype('bool')
         return(clear_border(binimage))
 
-    def segment(self, image, binimage):
+    def segment(self, binimage, image=None):
         '''
         Returns a set of region properties on labeled image using skimage
+
+        @param binimage: Binary image -- White pixels are foreground objects (berries, reference standards, etc.), black pixels are background
+        @param image: Original image -- if not specified, then color parameters cannot be calculated
         '''
-        image = self.preprocess(image)
-        if( binimage.shape != image.shape[0:2] ): #Need to check the following, b/c if I input Matlab-derived binary files to compare to the resized image, Matlab scales slightly differently (rounds instead of floor) than OpenCV2
+        image_boundaries = None
+        if( image != None ):
+            image = self.preprocess(image)
+        if( (image == None) or (binimage.shape != image.shape[0:2]) ): #Need to check the following, b/c if I input Matlab-derived binary files to compare to the resized image, Matlab scales slightly differently (rounds instead of floor) than OpenCV2
             binimage = binimage.astype('uint8')*255
-            binimage = cv2.resize(binimage, dsize=(image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST) #Have to flip shape, as cv2 expects image convention (cols,rows), while numpy treats shape as (rows,cols)
+            if( self.resize != 1.0 ):
+                if( image != None ):
+                    binimage = cv2.resize(binimage, dsize=(image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST) #Have to flip shape, as cv2 expects image convention (cols,rows), while numpy treats shape as (rows,cols)
+                else:
+                    binimage = cv2.resize(binimage, (0,0), fx=self.resize, fy=self.resize, interpolation=cv2.INTER_NEAREST)
             binimage = binimage.astype('bool')
         label_image = label(binimage)
         #Extract regions/blobs
@@ -224,21 +233,21 @@ class Segment():
         #Orig: Failed to work b/c was getting the sqrt of negative numbers - datadf.skinSurface = (2*pi*A**2)+(pi*A)*((((B**2)/sqrt((B**2)-(A**2)))*acos(A/B))+(((C**2)/sqrt((C**2)-(A**2)))*acos(A/C)))
         E                           = sqrt(1 - ((A**2)/(C**2)))
         datadf.skinSurface        = (2*pi*(A**2))*(1 + (C/(A*E))+asin(E)) #Again, this is a formula assuming a prolate spheroid, which better defines most cranberry shapes
-        #Calculate Color Stats for Each Blob
-        for i,r in regions.iterrows():
-            blobPixels                  = image[np.where(label_image == r.label)]
-            B_med,G_med,R_med           = np.median(blobPixels, axis=0)
-            datadf.loc[i, 'R_med']      = R_med
-            datadf.loc[i, 'G_med']      = G_med
-            datadf.loc[i, 'B_med']      = B_med
-            B_var,G_var,R_var           = np.var(blobPixels, axis=0)
-            datadf.loc[i, 'R_var']      = R_var
-            datadf.loc[i, 'G_var']      = G_var
-            datadf.loc[i, 'B_var']      = B_var
-            blobPixelsGray              = 1.0-rgb2gray(blobPixels)/255.0
-            datadf.loc[i, 'bwColor']    = np.sum(blobPixelsGray)/(r.area)
-            datadf.loc[i, 'vbwColor']   = np.var(blobPixelsGray)*100.0
-    
+        #Calculate Color Stats for Each Blob if an original image is provided
+        if( image != None ):
+            for i,r in regions.iterrows():
+                blobPixels                  = image[np.where(label_image == r.label)]
+                B_med,G_med,R_med           = np.median(blobPixels, axis=0)
+                datadf.loc[i, 'R_med']      = R_med
+                datadf.loc[i, 'G_med']      = G_med
+                datadf.loc[i, 'B_med']      = B_med
+                B_var,G_var,R_var           = np.var(blobPixels, axis=0)
+                datadf.loc[i, 'R_var']      = R_var
+                datadf.loc[i, 'G_var']      = G_var
+                datadf.loc[i, 'B_var']      = B_var
+                blobPixelsGray              = 1.0-rgb2gray(blobPixels)/255.0
+                datadf.loc[i, 'bwColor']    = np.sum(blobPixelsGray)/(r.area)
+                datadf.loc[i, 'vbwColor']   = np.var(blobPixelsGray)*100.0
         num_blobs = len(regions.index)
         half_blobs = int(self.numRefs/2)
         fruit_index = np.array(range(half_blobs, num_blobs - half_blobs), dtype='int')
@@ -249,7 +258,8 @@ class Segment():
             not_fruit_labels[r.coords[:,0], r.coords[:,1]] = False
         fruit_label_image = label_image.copy()
         fruit_label_image[not_fruit_labels] = 0 #Mark as 0 to clear out other label entries
-        image_boundaries = (mark_boundaries(image, fruit_label_image, color=(0,0,1))*255).astype('uint8')
+        if( image != None ):
+            image_boundaries = (mark_boundaries(image, fruit_label_image, color=(0,0,1))*255).astype('uint8')
         fruit_boundaries = find_boundaries(fruit_label_image)
 
         reference_index = np.setdiff1d(np.array(range(0, num_blobs)), fruit_index)
@@ -259,30 +269,32 @@ class Segment():
             not_reference_labels[r.coords[:,0], r.coords[:,1]] = False
         reference_label_image = label_image.copy()
         reference_label_image[not_reference_labels] = 0 #Mark as 0 to clear out other label entries
-        image_boundaries = (mark_boundaries(image_boundaries, reference_label_image, color=(1,0,0))*255).astype('uint8')
+        if( image != None ):
+            image_boundaries = (mark_boundaries(image_boundaries, reference_label_image, color=(1,0,0))*255).astype('uint8')
         reference_boundaries = find_boundaries(reference_label_image)
 
         #Normalize the features relative to the size standard, and to the 'real' size, if needed
-        datadf.loc[fruit_index, 'LvsW_r'] = datadf.loc[fruit_index, 'LvsW']/np.median(datadf.loc[reference_index, 'LvsW'])
-        datadf.loc[fruit_index, 'blobLength_r'] = datadf.loc[fruit_index, 'blobLength']/np.median(datadf.loc[reference_index, 'blobLength'])
-        datadf.loc[fruit_index, 'blobWidth_r'] = datadf.loc[fruit_index, 'blobWidth']/np.median(datadf.loc[reference_index, 'blobWidth'])
-        datadf.loc[fruit_index, 'projectedArea_r'] = datadf.loc[fruit_index, 'projectedArea']/np.median(datadf.loc[reference_index, 'projectedArea'])
-        datadf.loc[fruit_index, 'projectedPerimeter_r'] = datadf.loc[fruit_index, 'projectedPerimeter']/np.median(datadf.loc[reference_index, 'projectedPerimeter'])
-        datadf.loc[fruit_index, 'skinSurface_r'] = datadf.loc[fruit_index, 'skinSurface']/np.median(datadf.loc[reference_index, 'skinSurface'])
-        datadf.loc[fruit_index, 'blobVolume_r'] = datadf.loc[fruit_index, 'blobVolume']/np.median(datadf.loc[reference_index, 'blobVolume'])
-        datadf.loc[fruit_index, 'blobEccentricity_r'] = datadf.loc[fruit_index, 'blobEccentricity']/np.median(datadf.loc[reference_index, 'blobEccentricity'])
-        datadf.loc[fruit_index, 'blobSolidity_r'] = datadf.loc[fruit_index, 'blobSolidity']/np.median(datadf.loc[reference_index, 'blobSolidity'])
-        datadf.loc[fruit_index, 'bwColor_r'] = datadf.loc[fruit_index, 'bwColor']/np.median(datadf.loc[reference_index, 'bwColor'])
-        datadf.loc[fruit_index, 'vbwColor_r'] = datadf.loc[fruit_index, 'vbwColor']/np.median(datadf.loc[reference_index, 'vbwColor'])
-        
-        digitalLength = np.median(datadf.blobLength[reference_index]);
-        ratioConv=self.refSize/digitalLength;
-        datadf.loc[fruit_index, 'blobLength_r2'] = datadf.loc[fruit_index, 'blobLength'] * ratioConv
-        datadf.loc[fruit_index, 'blobWidth_r2'] = datadf.loc[fruit_index, 'blobWidth'] * ratioConv
-        datadf.loc[fruit_index, 'projectedArea_r2'] = datadf.loc[fruit_index, 'projectedArea'] * (ratioConv**2)
-        datadf.loc[fruit_index, 'projectedPerimeter_r2'] = datadf.loc[fruit_index, 'projectedPerimeter'] * ratioConv
-        datadf.loc[fruit_index, 'skinSurface_r2'] = datadf.loc[fruit_index, 'skinSurface'] * (ratioConv**2)
-        datadf.loc[fruit_index, 'blobVolume_r2'] = datadf.loc[fruit_index, 'blobVolume'] * (ratioConv**3)
-        datadf.loc[reference_index, 'accuracy'] = datadf.loc[reference_index, 'blobLength'] * (ratioConv)
+        if( self.numRefs > 0 ):
+            datadf.loc[fruit_index, 'LvsW_r'] = datadf.loc[fruit_index, 'LvsW']/np.median(datadf.loc[reference_index, 'LvsW'])
+            datadf.loc[fruit_index, 'blobLength_r'] = datadf.loc[fruit_index, 'blobLength']/np.median(datadf.loc[reference_index, 'blobLength'])
+            datadf.loc[fruit_index, 'blobWidth_r'] = datadf.loc[fruit_index, 'blobWidth']/np.median(datadf.loc[reference_index, 'blobWidth'])
+            datadf.loc[fruit_index, 'projectedArea_r'] = datadf.loc[fruit_index, 'projectedArea']/np.median(datadf.loc[reference_index, 'projectedArea'])
+            datadf.loc[fruit_index, 'projectedPerimeter_r'] = datadf.loc[fruit_index, 'projectedPerimeter']/np.median(datadf.loc[reference_index, 'projectedPerimeter'])
+            datadf.loc[fruit_index, 'skinSurface_r'] = datadf.loc[fruit_index, 'skinSurface']/np.median(datadf.loc[reference_index, 'skinSurface'])
+            datadf.loc[fruit_index, 'blobVolume_r'] = datadf.loc[fruit_index, 'blobVolume']/np.median(datadf.loc[reference_index, 'blobVolume'])
+            datadf.loc[fruit_index, 'blobEccentricity_r'] = datadf.loc[fruit_index, 'blobEccentricity']/np.median(datadf.loc[reference_index, 'blobEccentricity'])
+            datadf.loc[fruit_index, 'blobSolidity_r'] = datadf.loc[fruit_index, 'blobSolidity']/np.median(datadf.loc[reference_index, 'blobSolidity'])
+            datadf.loc[fruit_index, 'bwColor_r'] = datadf.loc[fruit_index, 'bwColor']/np.median(datadf.loc[reference_index, 'bwColor'])
+            datadf.loc[fruit_index, 'vbwColor_r'] = datadf.loc[fruit_index, 'vbwColor']/np.median(datadf.loc[reference_index, 'vbwColor'])
+            
+            digitalLength = np.median(datadf.blobLength[reference_index]);
+            ratioConv=self.refSize/digitalLength;
+            datadf.loc[fruit_index, 'blobLength_r2'] = datadf.loc[fruit_index, 'blobLength'] * ratioConv
+            datadf.loc[fruit_index, 'blobWidth_r2'] = datadf.loc[fruit_index, 'blobWidth'] * ratioConv
+            datadf.loc[fruit_index, 'projectedArea_r2'] = datadf.loc[fruit_index, 'projectedArea'] * (ratioConv**2)
+            datadf.loc[fruit_index, 'projectedPerimeter_r2'] = datadf.loc[fruit_index, 'projectedPerimeter'] * ratioConv
+            datadf.loc[fruit_index, 'skinSurface_r2'] = datadf.loc[fruit_index, 'skinSurface'] * (ratioConv**2)
+            datadf.loc[fruit_index, 'blobVolume_r2'] = datadf.loc[fruit_index, 'blobVolume'] * (ratioConv**3)
+            datadf.loc[reference_index, 'accuracy'] = datadf.loc[reference_index, 'blobLength'] * (ratioConv)
 
         return((datadf, fruit_index, reference_index, image_boundaries, fruit_boundaries, reference_boundaries))
