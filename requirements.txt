@@ -7,7 +7,6 @@ numpy
 opencv-python
 pandas
 plantcv
-py3exiv2
 pymongo
 pymongoext
 scikit-image
