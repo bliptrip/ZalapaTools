@@ -21,10 +21,10 @@ from glob import glob
 import gzip
 import json
 import numpy as np
-import py3exiv2
+#import py3exiv2
 from pymongo import MongoClient
 import sys
-from _sse import *
+from ztools.dip._sse import *
 
 #Some label constants -- can change these in the future, if they are changed in settings.json
 LABEL_VOID = 'VOID'
@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument('--hostname', action='store', default='localhost', help="The MongoDB hostname/ip to connect to.")
     parser.add_argument('-p', '--port', action='store', type=int, default=3003, help="The MongoDB port to connect to.")
     parser.add_argument('-d', '--db', action='store', default="meteor", help="MongoDB database name to access.")
+    parser.add_argument('-t', '--mongo-tags', '--tags', dest='tags', action='append', help="Mongo tags to filter -- specifies collection items of relevance to extract segmentation masks from.")
     parser.add_argument('-s', '--settings', action='store', default="settings.json", help="The settings.json file.")
     parser.add_argument('-c', '--class', '--settings-class', dest='settings_class', default='Drone Berry Development',  help="The name of the 'sets-of-classes' objects used for generating image masks using the semantic segmentation editor settings file.")
     parser.add_argument('-m', '--mode', action='store', choices=['pass-through', 'merge-partial', 'merge-partial-bedding'], default='pass-through', help='The mode, or type of preprocessing that should be done on the sse-designated masks.\r\n' +
@@ -51,13 +52,14 @@ def parse_args():
             '   merge-partial: Does everything that pass-through option does, except it merges plots and partial-plots into one mask.\r\n' +
             '   merge-partial-bedding: Does everything that pass-through option does, except it merges plots, partial-plots, and bedding into one mask.\r\n' +
             'NOTE: The logic in merging partial plots/bedding with plots into a single segmentation mask has to do with potentially getting better training/testing/prediction accuracy by having one less class.\n')
-    parser.add_argument('--mask-format', '--format', dest='format', action='store', choices=['split-binary', 'split-gray','layer-binary','layer-gray'], default='split-gray', help='The output format to use when generating mask files.  ' +
+    parser.add_argument('--mask-format', '--format', dest='format', action='store', choices=['flat','split-binary', 'split-gray','layer-binary','layer-gray'], default='split-gray', help='The output format to use when generating mask files.  ' +
+            'flat: Generate a flat PNG image using colors specified in settings file according to parsed.settings_class.' +
             'split-binary: This splits the mask layers into separate files and packs them into small, binary format.  ' + 
             'split-gray: Default.  This splits the mask layers into separate files and stores them as grayscale PNG files for easy viewing on any OS.  ' +
             'layer-binary: This stores the mask file as a multi-layer (multi-channel) numpy array in packed binary format.  This reduces folder clutter from having a single file for each segmentation mask for each annotated image.  ' +
             'layer-gray: This stores the mask file as a multi-layer (multi-channel) numpy array in a grayscale (uint8) format.')
     parser.add_argument('--mask-image', dest='mask', action='store_true', help='Generate original image with overlayed masks in PNG format.  NOTE: mask colors based on original ')  
-    parser.add_argument('-a', '--alpha', '--mask-image-alpha', dest='alpha', action='store', type=float, default=0.7, help='Generate original image with overlayed masks in PNG format.')  
+    parser.add_argument('-a', '--alpha', '--mask-image-alpha', dest='alpha', action='store', type=float, default=0.7, help='Alpha value/transparency for segmentation masks in the "mask image".')  
     parser.add_argument('--strip', '--delete-classes', dest='strip', action='append', default=[], help='Whether to remove/strip certain classes from the original settings.json file (either b/c they are irrelevant, or were never annotated in images.)')
     parser.add_argument('--mask-map', dest='map', default='sse2masks.map', help='A JSON-encoded map file containing the details on how the original segmentation masks map to masks used in training/prediction (for when deletion/merging is used)')
     parsed = parser.parse_args(sys.argv[1:])
@@ -73,7 +75,7 @@ def generateXMPMetadata(img_path,argv,json,author='Andrew Maule'):
     meta.write()
 
 if __name__ == '__main__':
-    pyexiv2.register_namespace('/', 'custom')
+    #pyexiv2.register_namespace('/', 'custom')
     parsed        = parse_args()
     sse2mask_map_dict = {'sse_settings_file': None,
                          'class': None,
@@ -90,52 +92,54 @@ if __name__ == '__main__':
         sse2mask_map_dict['class'] = parsed.settings_class
         settings            = json.loads(settings_fh.read())
         sets_of_classes     = settings['sets-of-classes']
-        drone_classes       = filter(lambda c: "Drone Berry Development" == c['name'], sets_of_classes)
-        for dc in drone_classes:
-            dcos = list(enumerate(dc['objects']))
-            for d in dcos:
+        relevant_classes       = filter(lambda c: parsed.settings_class == c['name'], sets_of_classes)
+        for rc in relevant_classes:
+            rcos = list(enumerate(rc['objects']))
+            for d in rcos:
                 ddict = d[1]
                 color_h = ddict['color'].lstrip('#')
                 ddict['rgb'] = tuple(int(color_h[i:i+2], 16) for i in (0, 2, 4)) #Deconstruct hex string
-            sse2mask_map_dict['orig-objects'] = copy.deepcopy(dcos) #Make a deep copy of the original
-        output_indices = [True]*len(dcos) #Initialize to all indices in the initial annotated images
+            sse2mask_map_dict['orig-objects'] = copy.deepcopy(rcos) #Make a deep copy of the original
+        output_indices = [True]*len(rcos) #Initialize to all indices in the initial annotated images
         #Get original indices before any stripping/remapping occurs
-        void_idx        = findClassIndex(dcos,LABEL_VOID)
-        aisle_idx       = findClassIndex(dcos,LABEL_AISLE)
-        plots_idx       = findClassIndex(dcos,LABEL_PLOT)
-        pplots_idx      = findClassIndex(dcos,LABEL_PARTIAL_PLOT)
-        bedding_idx     = findClassIndex(dcos,LABEL_BEDDING)
-        harvesto_idx    = findClassIndex(dcos,LABEL_HARVEST_RING_OUTER)
-        harvesti_idx    = findClassIndex(dcos,LABEL_HARVEST_RING_INNER)
+        if parsed.settings_class == "Drone Berry Development":
+            void_idx        = findClassIndex(rcos,LABEL_VOID)
+            aisle_idx       = findClassIndex(rcos,LABEL_AISLE)
+            plots_idx       = findClassIndex(rcos,LABEL_PLOT)
+            pplots_idx      = findClassIndex(rcos,LABEL_PARTIAL_PLOT)
+            bedding_idx     = findClassIndex(rcos,LABEL_BEDDING)
+            harvesto_idx    = findClassIndex(rcos,LABEL_HARVEST_RING_OUTER)
+            harvesti_idx    = findClassIndex(rcos,LABEL_HARVEST_RING_INNER)
         #Initialize map of original mask identifiers to new identifiers
-        sse2mask_map_dict['map'] = {e['label']: e['label'] for i,e in dcos}
+        sse2mask_map_dict['map'] = {e['label']: e['label'] for i,e in rcos}
         #Strip/delete
         for strip_object_name in parsed.strip:
-            object_idx = findClassIndex(dcos,strip_object_name)
+            object_idx = findClassIndex(rcos,strip_object_name)
             if object_idx != -1:
                 output_indices[object_idx] = False
         #Preprocess the sse2mask_map_dict labels and new-objects based on the mode
-        if parsed.mode == "merge-partial": 
-            output_indices[findClassIndex(dcos,LABEL_PARTIAL_PLOT)] = False
-            sse2mask_map_dict['map'][LABEL_PARTIAL_PLOT] = findClassIndex(dcos,LABEL_PARTIAL_PLOT)
-        elif parsed.mode == "merge-partial-bedding":
-            #Rename
-            dcos[findClassIndex(dcos,LABEL_PLOT)][1]['label'] = LABEL_CRANBERRY_VEGETATION
-            sse2mask_map_dict['map'][LABEL_PLOT] = LABEL_CRANBERRY_VEGETATION
-            #Remap
-            output_indices[findClassIndex(dcos,LABEL_PARTIAL_PLOT)] = False
-            sse2mask_map_dict['map'][LABEL_PARTIAL_PLOT] = LABEL_CRANBERRY_VEGETATION
-            #Remap
-            output_indices[findClassIndex(dcos,LABEL_BEDDING)] = False
-            sse2mask_map_dict['map'][LABEL_BEDDING] = LABEL_CRANBERRY_VEGETATION
-        sse2mask_map_dict['new-objects'] = copy.deepcopy([e[1] for e in filter(lambda x: x[0],zip(output_indices,dcos))])
+        if parsed.settings_class == "Drone Berry Development":
+            if parsed.mode == "merge-partial": 
+                output_indices[findClassIndex(rcos,LABEL_PARTIAL_PLOT)] = False
+                sse2mask_map_dict['map'][LABEL_PARTIAL_PLOT] = findClassIndex(rcos,LABEL_PARTIAL_PLOT)
+            elif parsed.mode == "merge-partial-bedding":
+                #Rename
+                rcos[findClassIndex(rcos,LABEL_PLOT)][1]['label'] = LABEL_CRANBERRY_VEGETATION
+                sse2mask_map_dict['map'][LABEL_PLOT] = LABEL_CRANBERRY_VEGETATION
+                #Remap
+                output_indices[findClassIndex(rcos,LABEL_PARTIAL_PLOT)] = False
+                sse2mask_map_dict['map'][LABEL_PARTIAL_PLOT] = LABEL_CRANBERRY_VEGETATION
+                #Remap
+                output_indices[findClassIndex(rcos,LABEL_BEDDING)] = False
+                sse2mask_map_dict['map'][LABEL_BEDDING] = LABEL_CRANBERRY_VEGETATION
+        sse2mask_map_dict['new-objects'] = copy.deepcopy([e[1] for e in filter(lambda x: x[0],zip(output_indices,rcos))])
         #Now that we have removed the requested classes, generate a one-to-one map
         sse2mask_map_dict['labels'] = [e[1]['label'] for e in sse2mask_map_dict['new-objects']]
         sse2mask_map_json = json.dumps(sse2mask_map_dict)
         client          = MongoClient(parsed.hostname, parsed.port)
         db              = client[parsed.db]
         sse_samples     = db.SseSamples
-        for annotation in sse_samples.find({"tags": {"$nin": ['predicted']}}):
+        for annotation in sse_samples.find({"tags": {"$in": parsed.tags}}):
             #Find the corresponding image on the local drive
             img_path = parsed.path + '/' + annotation['folder'] + '/' + annotation['file']
             #Load the image, mostly to just get size parameters
@@ -143,7 +147,7 @@ if __name__ == '__main__':
             #Filter contours by classIndex
             class_mask = []
             union = np.zeros((img.shape[0],img.shape[1]), dtype='bool')
-            for i in range(0, len(dcos)):
+            for i in range(0, len(rcos)):
                 contourObjects  = filter(lambda o: i == o['classIndex'],annotation['objects'])
                 contours        = [ np.array([[[np.round(p['x']),np.round(p['y'])]] for p in o['polygon']], dtype='int32') for o in contourObjects ]
                 mask            = np.zeros((img.shape[0],img.shape[1]), dtype='float')
@@ -151,22 +155,23 @@ if __name__ == '__main__':
                 mask_bin = mask.astype('bool')
                 union    = union | mask_bin
                 class_mask.append(mask_bin)
-            #Subtract out harvest rings from both plots and partial plots
-            for strip_class in parsed.strip:
-                strip_class_idx = findClassIndex(dcos,strip_class)
-                class_mask[void_idx] |= class_mask[strip_class_idx]
-            class_mask[plots_idx] = class_mask[plots_idx] & ~class_mask[harvesto_idx]
-            class_mask[pplots_idx] = class_mask[pplots_idx] & ~class_mask[harvesto_idx]
-            #Subtract out the inner part of harvest ring from outer
-            class_mask[harvesto_idx] = class_mask[harvesto_idx] & ~class_mask[harvesti_idx]
-            #Now that we have all contours for all classes, build the aisle mask as the inverse of the union of all other masks
-            class_mask[aisle_idx] = ~union #Generate the inverse
-            #Check the mode to see if we need to merge anything
-            if parsed.mode == "merge-partial": 
-                class_mask[plots_idx] |= class_mask[pplots_idx] #Merge the partial plots into the plots
-            elif parsed.mode == "merge-partial-bedding":
-                class_mask[plots_idx] |= (class_mask[pplots_idx] | class_mask[bedding_idx]) #Merge the partial plots and bedding into the plots, and rename the 'plots' destination mask to LABEL_CRANBERRY_VEGETATION
-            #Based on the mask file format option, determine how to generate the output mask files
+            if parsed.settings_class == "Drone Berry Development":
+                #Subtract out harvest rings from both plots and partial plots
+                for strip_class in parsed.strip:
+                    strip_class_idx = findClassIndex(rcos,strip_class)
+                    class_mask[void_idx] |= class_mask[strip_class_idx]
+                class_mask[plots_idx] = class_mask[plots_idx] & ~class_mask[harvesto_idx]
+                class_mask[pplots_idx] = class_mask[pplots_idx] & ~class_mask[harvesto_idx]
+                #Subtract out the inner part of harvest ring from outer
+                class_mask[harvesto_idx] = class_mask[harvesto_idx] & ~class_mask[harvesti_idx]
+                #Now that we have all contours for all classes, build the aisle mask as the inverse of the union of all other masks
+                class_mask[aisle_idx] = ~union #Generate the inverse
+                #Check the mode to see if we need to merge anything
+                if parsed.mode == "merge-partial": 
+                    class_mask[plots_idx] |= class_mask[pplots_idx] #Merge the partial plots into the plots
+                elif parsed.mode == "merge-partial-bedding":
+                    class_mask[plots_idx] |= (class_mask[pplots_idx] | class_mask[bedding_idx]) #Merge the partial plots and bedding into the plots, and rename the 'plots' destination mask to LABEL_CRANBERRY_VEGETATION
+                #Based on the mask file format option, determine how to generate the output mask files
             class_mask_subset = [e[1] for e in filter(lambda x: x[0], zip(output_indices,class_mask))]
             if parsed.format == 'split-binary':
                 for i,m in enumerate(class_mask_subset):
@@ -189,8 +194,8 @@ if __name__ == '__main__':
             cv2.imwrite(img_path+'.mask.png',overlay)
             cv2.imwrite(img_path+'.overlay.mask.png',mchannel_mask)
             #Write mapping parameters into the png overlay image.
-            generateXMPMetadata(img_path+'.mask.png',sys.argv,sse2mask_map_json)
-            generateXMPMetadata(img_path+'.overlay.mask.png',sys.argv,sse2mask_map_json)
+            #generateXMPMetadata(img_path+'.mask.png',sys.argv,sse2mask_map_json)
+            #generateXMPMetadata(img_path+'.overlay.mask.png',sys.argv,sse2mask_map_json)
         with open(parsed.map, 'w') as map_fh:
             map_fh.write(json.dumps(sse2mask_map_dict))
             map_fh.close()
