@@ -31,5 +31,7 @@ setup(name='ztools',
                 'ztools.dip.chaincodes',
                 'ztools.cameracalibration'],
       install_requires=requirements,
-      scripts=[]
+      scripts=['ztools/dip/sse2masks.py',
+               'ztools/dip/masks2sse.py',
+               'ztools/dip/pmasks2sse.py']
     )
