@@ -122,6 +122,10 @@ class SCCEncoder(object):
     def raw(self):
         return(np.array(self.SCC))
 
+    def decode(self, encstring):
+        SCC = ((np.array(encstring.encode('utf32'),dtype=float) - 0x400) * 2 * self.precision) + 1
+        return(SCC)
+
     def __str__(self):
         #Discretize the output into a string of characters 
         charsb = (((np.array(self.SCC, dtype='float') - (-1))/2)/self.precision) + 0x400 #0x400 is the beginning of the cyrillic alphabet, which offers 256 contiguous character options
