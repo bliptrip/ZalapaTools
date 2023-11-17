@@ -1,1 +1,1 @@
-from _sse import SSEObject,SSEAnnotation,SSECollection
+from ._sse import SSEObject,SSEAnnotation,SSECollection
