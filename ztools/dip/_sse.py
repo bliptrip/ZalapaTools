@@ -46,6 +46,13 @@ def findClassIndex(drone_class_objects,name):
             break
     return index
 
+def findClassName(drone_class_objects,index):
+    name = None
+    for i,dco in drone_class_objects:
+        if index == i:
+            name = dco['label']
+            break
+    return name
 
 def generateMaskOverlay(img, masks, drone_class_objects, alpha=0.4):
     newimg        = np.zeros(img.shape, dtype='uint8')
