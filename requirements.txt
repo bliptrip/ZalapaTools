@@ -1,6 +1,4 @@
 argparse
-flask
-h5py
 imutils
 keras
 numpy
@@ -12,4 +10,3 @@ pymongoext
 scikit-image
 scikit-learn
 scipy
-tensorflow
