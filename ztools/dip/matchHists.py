@@ -41,13 +41,17 @@ class MatchHists:
         return
 
 
-    def push_reference(self, img):
-        '''Adds an image to the reference image histogram accumulator.  NOTE: img must be a single-channel, gray-scale/intensity image for this to work.'''
+    def push_reference(self, img, ma=None):
+        '''Adds an image to the reference image histogram accumulator.'''
+        if type(ma) != type(None):
+            img = np.ma.masked_array(img,mask=~ma)
         for i in range(0,self.nchannels):
             if( self.nchannels > 1 ):
                 cimg = img[:,:,i]
             else:
                 cimg = img[:,:]
+            if type(ma) != type(None):
+                cimg = cimg.compressed() #This only works on masked arrays
             (img_hist,img_bins)                         = np.histogram(cimg, bins=self.num_bins, range=(0,self.num_bins))
             img_hist                                    = img_hist.astype(np.uint64)
             self.reference_image_hist_accumulator[:,i]  += img_hist
@@ -73,7 +77,6 @@ class MatchHists:
 
     def gen_reference_cdf(self, imgs):
         '''Calculates a reference cumulative distribution function from a list of images.'''
-        '''NOTE: The input image must be a single-channel of an image.'''
         for img in imgs:
             self.push_reference(img)
         self.calc_reference_pdf()
@@ -84,39 +87,53 @@ class MatchHists:
         self.source_cdf = cdf
         return
 
-    def map(self, img):
+    def map(self, img, ma=None):
         '''Map a source image to target image by matching against the reference histogram.  NOTE: This requires that set_source_cdf() was previously called, and is a low-level routine that is wrapped by match()'''
-        '''NOTE: The input image must be a single-channel of an image.'''
+        if type(ma) != type(None):
+           img = np.ma.masked_array(img,mask=~ma)
         new_img = [None] * self.nchannels
         #First convert input image to a set of cdf percentiles
         for i in range(0, self.nchannels):
             if( self.nchannels > 1 ):
-                img_percentiles = self.source_cdf[i][img[:,:,i].flatten()]
+                cimg = img[:,:,i]
             else:
-                img_percentiles = self.source_cdf[i][img.flatten()]
+                cimg = img
+            if type(ma) != type(None):
+                cimg_flat = cimg.compressed()
+            else:
+                cimg_flat = cimg.flatten()
+            img_percentiles = self.source_cdf[i][cimg_flat]
 
             new_img[i]  = self.reference_icdf[i](img_percentiles)
             #Now deal with clipping correctly
             new_img[i][new_img[i] >= self.num_bins] = self.num_bins-1
             new_img[i][new_img[i] < 0] = 0
             new_img[i]         = new_img[i].astype(img.dtype) #Convert to the same as input img type
-            new_img[i]         = new_img[i].reshape(img.shape[0:2]) #Reshape to the same as input img shape
+            if type(ma) != type(None):
+                np.place(img[:,:,i], ~img.mask[:,:,i], new_img[i])
+                new_img[i]         = img[:,:,i]
+            else:
+                new_img[i]         = new_img[i].reshape(img.shape[0:2]) #Reshape to the same as input img shape
         #Now combine all three channels
         return(np.stack(new_img, axis=-1))
 
-    def match(self, img):
+    def match(self, img, ma=None):
         '''Map a source image to target image by matching against the reference histogram.  This wraps the map() function and internally calculates the input image's histogram and cumulative distribution function first.'''
         source_cdf = [None] * self.nchannels
         img_hist = [None] * self.nchannels
+        if type(ma) != type(None):
+            img = np.ma.masked_array(img, mask=~ma)
         for i in range(0, self.nchannels):
             if( self.nchannels > 1 ):
                 cimg = img[:,:,i]
             else:
                 cimg = img
-            (img_hist[i],img_bins)   = np.histogram(cimg, bins=self.num_bins, range=(0,self.num_bins), density=True)
+            if type(ma) != type(None):
+                cimg = cimg.compressed() #This only works on masked arrays
+            (img_hist[i],img_bins) = np.histogram(cimg, bins=self.num_bins, range=(0,self.num_bins), density=True)
             source_cdf[i] = np.cumsum(img_hist[i])
         self.set_source_cdf(source_cdf)
-        new_img = self.map(img)
+        new_img = self.map(img,ma)
         if( self.draw ):
             #Show the reference histogram, the original histogram, and the new histogram
             for i in range(0,self.nchannels):
