@@ -33,5 +33,6 @@ setup(name='ztools',
       install_requires=requirements,
       scripts=['ztools/dip/sse2masks.py',
                'ztools/dip/masks2sse.py',
-               'ztools/dip/pmasks2sse.py']
+               'ztools/dip/pmasks2sse.py',
+               'ztools/dip/matchHists.py']
     )
